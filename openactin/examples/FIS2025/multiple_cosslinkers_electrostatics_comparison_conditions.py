@@ -1,4 +1,4 @@
-#!/home/ne25/miniconda3/envs/openmm/bin/python
+#!/home/za32/.conda/envs/actin/bin/python
 #SBATCH --account=commons
 #SBATCH --export=All
 #SBATCH --partition=commons
@@ -8,13 +8,16 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
 #SBATCH --export=ALL
-#SBATCH --mail-user=ne25@rice.edu
+#SBATCH --mail-user=za32@rice.edu
 #SBATCH --mail-type=ALL
 #SBATCH --array=0-47 
 #SBATCH --mem=16G
 
 import sys # Import the sys module for interacting with the Python interpreter
-# sys is a module that gives access to variables and ufnctions
+sys.path.insert(0, "/home/za32/OpenActin")
+#adding the folder of openactin manually because of strange error that was coming
+
+
 import openactin # imports custom module called courseactin
 import pandas as pd # imports pandas library, excel for python
 import numpy as np # imports the numpy library, matlab for python
