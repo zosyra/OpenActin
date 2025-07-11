@@ -1,4 +1,4 @@
-#!/home/cab22/miniconda3/bin/python
+#!/home/za32/.conda/envs/actin/bin/python
 
 #SBATCH --account=commons
 #SBATCH --output ./Simulations_nots/SingleABP/slurm-%A_%a.out
@@ -10,10 +10,13 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --gres=gpu:1
 #SBATCH --export=ALL
-#SBATCH --array=0-15
+#SBATCH --mail-user=za32@rice.edu
+#SBATCH --mail-type=ALL
+#SBATCH --array=0-12
 #SBATCH --mem=16G
 
 import sys
+sys.path.insert(0, "/home/za32/OpenActin")
 import pandas as pd
 import openactin
 import numpy as np
@@ -92,10 +95,9 @@ if __name__ == '__main__':
                   "disorder": [0, 0.5],
                   "temperature": [300],
                   "system2D": [False],
-                  "frequency": [1000],
-                  # "run_time": [20],
-                  # "runSteps":[10000000],
-                  "run_time": [0.01],
+                  "frequency": [100_000],
+                  "run_time": [20],
+                  "runSteps":[10000000],
                   "abp": ['CBP', 'AAC', 'AAC2', 'CAM2','FAS', 'CAM'],
                   "simulation_platform": ["OpenCL"]}
     test_parameters = {"simulation_platform": "CUDA",
@@ -103,13 +105,13 @@ if __name__ == '__main__':
                        "abp":'CAM',
                        "disorder": 0.2,
                        }
-    job_id = 0
-    if len(sys.argv) > 1:
-        try:
-            job_id = int(sys.argv[1])
-        except TypeError:
-            pass
-    sjob = openactin.SlurmJobArray("Simulations_scratch/Rebundling/Rebundling", parameters, test_parameters, job_id)
+    # job_id = 0
+    # if len(sys.argv) > 1:
+    #     try:
+    #         job_id = int(sys.argv[1])
+    #     except TypeError:
+    #         pass
+    sjob = openactin.SlurmJobArray("Simulations_scratch/Rebundling/Rebundling", parameters, test_parameters)
     sjob.print_parameters()
     sjob.print_slurm_variables()
     sjob.write_csv()
@@ -271,6 +273,8 @@ if __name__ == '__main__':
     temperature = sjob["temperature"] * u.kelvin
     integrator = openmm.LangevinIntegrator(temperature, .0001 / u.picosecond, 1 * u.picoseconds)
     simulation = openmm.app.Simulation(top.topology, s.system, integrator, platform)
+    print("Number of atoms in topology:", top.topology.getNumAtoms())
+    print("Number of positions:", len(coord.positions))
     simulation.context.setPositions(coord.positions)
 
     # Modify parameters
@@ -326,7 +330,7 @@ if __name__ == '__main__':
 
     # Turn off nematic parameter
     # simulation.context.setParameter('kp_alignment',0)
-    # simulation.runForClockTime(sjob["run_time"])
+    simulation.runForClockTime(sjob["run_time"])
 
     # Save checkpoint
     chk = f'{Sname}.chk'
