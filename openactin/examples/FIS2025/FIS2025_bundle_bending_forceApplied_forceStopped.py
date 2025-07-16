@@ -49,7 +49,7 @@ if __name__ == '__main__':
     }
 
     # Create a SLURM job array object for this parameter sweep
-    sjob = openactin.SlurmJobArray("Simulations_scratch/Bundles/Bending_07112025/Bending_Stopped_AtHalf", parameters, test_parameters)
+    sjob = openactin.SlurmJobArray("Simulations_scratch/Bundles/Bending_07142025/Bending_Stopped_AtHalf", parameters, test_parameters)
     sjob.print_parameters()      # Print the parameters for this job
     sjob.print_slurm_variables() # Print SLURM variables for this job
     sjob.write_csv()             # Write the parameters to a CSV file for record-keeping
@@ -296,7 +296,7 @@ if __name__ == '__main__':
     frequency = sjob["frequency"]
     for step in range(0, total_steps//2, frequency):
         # Linearly interpolate theta0 from pi (180 deg) to 0 over the simulation
-        frac = step / total_steps
+        frac = step / total_steps * 2 
         new_theta0 = np.pi * (1 - frac) + np.pi * (20/180) * frac  # 20 degrees at the end
         simulation.context.setParameter("theta0", new_theta0)
         print(f'Step {step}, setting theta0 to {new_theta0} radians ({new_theta0 * 180 / np.pi} degrees)')
