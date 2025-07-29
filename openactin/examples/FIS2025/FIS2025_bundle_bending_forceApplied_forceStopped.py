@@ -29,17 +29,20 @@ if __name__ == '__main__':
     parameters = {
         "abp": ["CAM","FAS","CBP"],                  # Sweep both CaMKII and fascin
         "epsilon": [100,90,80,70,60,50],                   # Fascin epsilon value
-        "actinLen": [250, 500,1000],            # Test different filament lengths
-        "layers": [2, 3, 4, 5],                    # Test different bundle sizes (layers)
-        "repetition": range(1),                 # Repeat each condition 3 times for statistics
+        "actinLen": [250],            # Test different filament lengths
+        "layers": [2, 3],                    # Test different bundle sizes (layers)
+        "repetition": range(3),                 # Repeat each condition 3 times for statistics
         "disorder": [0],                        # Amount of disorder in filament placement
         "bundleWidth": [1000],                  # nm, used for filtering grid for large bundles
         "temperature": [300],                   # Simulation temperature (K)
         "frequency": [10000],                   # Output frequency for reporters
         #"run_time": [20],                       # Simulation run time (arbitrary units)
-        "run_steps": [1_000_000],     
+        "run_steps": [2_000_000],     
         # TODO: remember to change simulation platform back to OpenCL           # Number of simulation steps to run
-        "simulation_platform": ["OpenCL"]      # Platform for OpenMM (GPU or CPU)
+        "simulation_platform": ["OpenCL"],     # Platform for OpenMM (GPU or CPU)
+        'electrostatics': [False],              # Whether to include electrostatics force
+        'hysteresis': [True, False],  # Whether to apply hysteresis in the bending force
+
     }
     # Test parameters for quick runs (CPU, short time, low frequency)
     test_parameters = {
@@ -49,7 +52,7 @@ if __name__ == '__main__':
     }
 
     # Create a SLURM job array object for this parameter sweep
-    sjob = openactin.SlurmJobArray("Simulations_scratch/Bundles/Bending_07142025/Bending_Stopped_AtHalf", parameters, test_parameters)
+    sjob = openactin.SlurmJobArray("Simulations_scratch/Bundles/Bending_07292025/Bending", parameters, test_parameters)
     sjob.print_parameters()      # Print the parameters for this job
     sjob.print_slurm_variables() # Print SLURM variables for this job
     sjob.write_csv()             # Write the parameters to a CSV file for record-keeping
@@ -68,6 +71,7 @@ if __name__ == '__main__':
     c = bound_actin_template[bound_actin_template['resName'] == abp][['x', 'y', 'z']]
     v = c.mean(axis=0)
     d = 2 * (v['x'] ** 2 + v['y'] ** 2) ** .5  # Effective crosslinker size
+    effective_crosslinker_size = d
 
     print(f"Grid spacing d: {d}")
     # Generate a hexagonal grid for the bundle cross-section
@@ -202,30 +206,37 @@ if __name__ == '__main__':
         s.setForces(AlignmentConstraint=False, PlaneConstraint=system2D, forces=['abp'])
 
     # --- Add electrostatics force (Debye-Hückel) ---
-    electrostatics = openmm.CustomNonbondedForce("epsilon_electrostatics*q1*q2/r*exp(-kappa_electrostatics*r)")
-    electrostatics.setNonbondedMethod(electrostatics.CutoffNonPeriodic)
-    electrostatics.addPerParticleParameter("q")
-    # Use a reasonable default for epsilon and kappa, or add to parameters if needed
-    electrostatics.addGlobalParameter("epsilon_electrostatics", 1.736385125)  # (nm/charge^2)
-    electrostatics.addGlobalParameter("kappa_electrostatics", 1)  # (nm^-1)
-    electrostatics.setCutoffDistance(40*openmm.unit.nanometers)
-    electrostatics.setUseLongRangeCorrection(True)
-    # Assign charges to particles based on residue and atom name (as in the box script)
-    for _, a in s.atom_list.iterrows():
-        if a.residue_name in ['ACT','ACD'] and a.name in ['A1','A2','A3','A4']:
-            q = -2.5
-        elif a.residue_name in ['FAS']:
-            q = 3.3/6
-        elif a.residue_name in ['CAM']:
-            q = -3.5
-        else:
-            q = 0
-        electrostatics.addParticle([q])
-    # Exclude close bonded pairs from electrostatics
-    if hasattr(s, 'bonds') and hasattr(s.bonds, 'values'):
-        electrostatics.createExclusionsFromBonds(s.bonds[['i', 'j']].values.tolist(), 3)
-    #TODO: Check why this may be causing nan
-    #s.system.addForce(electrostatics)
+    if sjob['electrostatics']:
+        electrostatics = openmm.CustomNonbondedForce("epsilon_electrostatics*q1*q2/r*exp(-kappa_electrostatics*r)")
+        #*q1*q2/r*exp(-kappa_electrostatics*r)
+        electrostatics.setNonbondedMethod(electrostatics.CutoffNonPeriodic)
+        electrostatics.addPerParticleParameter("q")
+        # Use a reasonable default for epsilon and kappa, or add to parameters if needed
+        electrostatics.addGlobalParameter("epsilon_electrostatics", 1.736385125)  # (nm/charge^2)
+        electrostatics.addGlobalParameter("kappa_electrostatics", 1)  # (nm^-1)
+        electrostatics.setCutoffDistance(40*openmm.unit.nanometers)
+        # electrostatics.setUseLongRangeCorrection(True)
+        # Assign charges to particles based on residue and atom name (as in the box script)
+        for _, a in s.atom_list.iterrows():
+            if a.residue_name in ['ACT','ACD'] and a.name in ['A1','A2','A3','A4']:
+                q = -2.5
+            elif a.residue_name in ['FAS']:
+                q = 3.3/6
+            elif a.residue_name in ['CAM']:
+                q = -3.5
+            else:
+                q = 0
+            electrostatics.addParticle([q])
+            break
+        # Exclude close bonded pairs from electrostatics
+        if hasattr(s, 'bonds') and hasattr(s.bonds, 'values'):
+            electrostatics.createExclusionsFromBonds(s.bonds[['i', 'j']].values.tolist(), 3)
+        #TODO: Check why this may be causing nan
+
+        print("Added electrostatics force to the system")   
+        s.system.addForce(electrostatics)
+
+
 
     # --- Add Custom Centroid Bond Force to bend the filament ---
     from openmm import CustomCentroidBondForce
@@ -248,7 +259,7 @@ if __name__ == '__main__':
 
     # Create the CustomCentroidBondForce
     # The angle is defined by the three centroids (groups)
-    k_bend = 100_000.0  # kJ/mol/rad^2, adjust as needed
+    k_bend = 10_000.0  # kJ/mol/rad^2, adjust as needed
     theta0 = 3.14159  # radians (180 deg, straight by default), can be changed during simulation
     centroid_force = CustomCentroidBondForce(3, "k_bend * (angle(g1,g2,g3) - theta0)^2")
     centroid_force.addGlobalParameter("k_bend", k_bend)
@@ -261,6 +272,31 @@ if __name__ == '__main__':
     centroid_force.addBond([g1, g2, g3], [])
     # Add the force to the system
     s.system.addForce(centroid_force)
+
+
+    #Add a force to keep the filaments bundled together
+    from openmm import CustomBondForce
+    # Create a CustomBondForce to keep the filaments bundled together
+    bundle_force = CustomBondForce("k_bundle_ends * (r - r0)^2")
+    bundle_force.addGlobalParameter("k_bundle_ends", 1000.0)  # Force constant
+    bundle_force.addPerBondParameter("r0")  # Equilibrium distance
+    # Add bonds between all pairs of actin filaments
+    actin_indices = group1 + group3  # Use the first and last groups for bundling\\
+    print(f"Number of actin indices for bundling: {len(actin_indices)}")
+    actin_selection = actin_atoms.loc[actin_indices]
+    actin_indices = actin_selection[actin_selection['atom_name'].isin(['A2'])].index.tolist()
+    print(f"Number of actin indices for bundling: {len(actin_indices)}")
+    counter = 0
+    for i in range(len(actin_indices)):
+        for j in range(i + 1, len(actin_indices)):
+            # Calculate the equilibrium distance based on the distance between the centroids of the two filaments
+            r0 = np.linalg.norm(s.top.positions[actin_indices[i]] - s.top.positions[actin_indices[j]]) 
+
+            if r0 < 1.2 * effective_crosslinker_size * u.nanometers:
+                bundle_force.addBond(actin_indices[i], actin_indices[j], [r0.value_in_unit(u.nanometers)])
+                counter += 1
+    print(f'Added {counter} bundle bonds between actin filaments')
+
 
 
     # Set up the integrator and simulation object
@@ -288,12 +324,21 @@ if __name__ == '__main__':
     print(f'Initial energy: {energy} KJ/mol')
 
     # Minimize energy, set velocities, and run the simulation for the specified time
+    if sjob['electrostatics']:
+        for i in range(101):
+            frac= i / 100
+            simulation.context.setParameter("epsilon_electrostatics", 1.736385125 * frac)
+            simulation.minimizeEnergy()
+            print(frac)
     simulation.minimizeEnergy()
+
+    
     print(f'Initial energy after minimizing energy: {energy} KJ/mol')
     simulation.context.setVelocitiesToTemperature(temperature)
     # Gradually change theta0 from 180 to 0 degrees over the course of the simulation
     total_steps = sjob["run_steps"]
     frequency = sjob["frequency"]
+    
     for step in range(0, total_steps//2, frequency):
         # Linearly interpolate theta0 from pi (180 deg) to 0 over the simulation
         frac = step / total_steps * 2 
@@ -302,11 +347,27 @@ if __name__ == '__main__':
         print(f'Step {step}, setting theta0 to {new_theta0} radians ({new_theta0 * 180 / np.pi} degrees)')
         centroid_force.updateParametersInContext(simulation.context)
         simulation.step(frequency)
-    simulation.context.setParameter("k_bend", 0.0)  # Ensure theta0 is 0 at the end
-    # Run the simulation for the remaining steps
-    remaining_steps = total_steps - (total_steps // 2)
-    print(f'Running remaining {remaining_steps} steps with k_bend = 0')
-    simulation.step(remaining_steps)
+    if sjob['hysteresis']:
+        # After half the steps, stop bending the filaments
+        for step in range(total_steps//2, total_steps, frequency):
+            # Linearly interpolate theta0 from pi (180 deg) to 0 over the simulation
+            # frac = step / total_steps * 2 
+            # new_theta0 = np.pi * (1 - frac) + np.pi * (20/180) * 1-frac  # 20 degrees at the end
+            frac = 2 * (total_steps - step) / total_steps - 1
+            new_theta0 = np.pi * (1 - frac) + np.pi * (20/180) * frac  # Interpolate back to pi
+            simulation.context.setParameter("theta0", new_theta0)
+            print(f'Step {step}, setting theta0 to {new_theta0} radians ({new_theta0 * 180 / np.pi} degrees)')
+            centroid_force.updateParametersInContext(simulation.context)
+            simulation.step(frequency)
+        
+    else:
+        print("Stopping bending force application")
+        simulation.context.setParameter("k_bend", 0.0)  # Ensure theta0 is 0 at the end
+        # Run the simulation for the remaining steps
+        
+        remaining_steps = total_steps - (total_steps // 2)
+        print(f'Running remaining {remaining_steps} steps with k_bend = 0')
+        simulation.step(remaining_steps)
 
     # Save a checkpoint file for restarting or analysis
     chk = f'{Sname}.chk'
